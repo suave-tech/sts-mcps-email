@@ -1,5 +1,6 @@
 import { POLL_INTERVAL_MS } from "../config/constants.js";
 import { query } from "../db/client.js";
+import { logger } from "../logger.js";
 import { syncQueue } from "./queue.js";
 
 async function enqueueDueAccounts(): Promise<void> {
@@ -15,17 +16,17 @@ async function enqueueDueAccounts(): Promise<void> {
       { jobId: `incr:${row.id}:${Date.now()}`, removeOnComplete: 100, removeOnFail: 100 },
     );
   }
-  console.log(`[scheduler] enqueued ${rows.length} accounts`);
+  logger.info({ enqueued: rows.length }, "scheduler tick");
 }
 
 async function tick(): Promise<void> {
   try {
     await enqueueDueAccounts();
   } catch (err) {
-    console.error("[scheduler] tick failed:", (err as Error).message);
+    logger.error({ err }, "scheduler tick failed");
   }
 }
 
 tick();
 setInterval(tick, POLL_INTERVAL_MS);
-console.log(`[scheduler] polling every ${POLL_INTERVAL_MS / 60000} min`);
+logger.info({ intervalMinutes: POLL_INTERVAL_MS / 60000 }, "scheduler started");

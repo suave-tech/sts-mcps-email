@@ -1,8 +1,10 @@
 # Tech Spec: Multi-Account Email Vector Database
 
-**Version:** 1.0  
-**Status:** Draft  
-**Last Updated:** 2026-04-18
+**Version:** 1.1  
+**Status:** Implemented (Phase 1), partial Phase 2  
+**Last Updated:** 2026-04-20
+
+> **How to read this doc.** It was written as a design spec before implementation and intentionally covers a larger product than the current code. Sections below marked with a ⚠️ callout reconcile the spec against what actually shipped. Treat the README's status table as the source of truth for "what works today"; treat this doc as "what the system is aimed at and why."
 
 ---
 
@@ -69,11 +71,13 @@ This system ingests emails from multiple user-owned accounts, embeds them using 
 
 ### 4.1 Supported Providers
 
-| Provider | Protocol | Auth Method |
-|----------|----------|-------------|
-| Gmail | Gmail REST API | OAuth 2.0 |
-| Outlook / Microsoft 365 | Microsoft Graph API | OAuth 2.0 |
-| Generic IMAP | IMAP over TLS | App password / OAuth |
+| Provider | Protocol | Auth Method | Status |
+|----------|----------|-------------|--------|
+| Gmail | Gmail REST API | OAuth 2.0 | ✅ Implemented |
+| Outlook / Microsoft 365 | Microsoft Graph API | OAuth 2.0 | 🚧 Adapter compiles, OAuth routes not implemented — see `TODO` in [src/routes/oauth.ts](../src/routes/oauth.ts) |
+| Generic IMAP | IMAP over TLS | App password / OAuth | ❌ Not started |
+
+> ⚠️ **Drift note.** Only Gmail is end-to-end functional. `providerFor("outlook")` will return the adapter but no OAuth entry points exist yet, so no account can actually be connected via Outlook.
 
 ### 4.2 Account Registration Flow
 
@@ -133,11 +137,13 @@ Subject: {subject}
 
 ### 5.2 Embedding Model
 
-**Provider:** OpenAI (primary) or Cohere (fallback)  
+**Provider:** OpenAI  
 **Model:** `text-embedding-3-small` (1,536 dimensions) — cost-efficient with strong semantic performance  
 **Upgrade path:** `text-embedding-3-large` (3,072 dimensions) for higher accuracy if needed
 
 Each email produces exactly **one vector** per the whole-email chunking strategy.
+
+> ⚠️ **Drift note.** The original spec listed Cohere as a fallback; the implementation is OpenAI-only. Falling back would require re-embedding every vector (dimensions differ), so "fallback" was never actually meaningful — use pinned model + key rotation instead.
 
 ### 5.3 Metadata Stored Alongside Each Vector
 
@@ -335,7 +341,7 @@ The search interface should clearly show which account each result came from:
 | OAuth / Token Store | Postgres (encrypted columns) |
 | Embedding API | OpenAI `text-embedding-3-small` |
 | Vector DB | Pinecone (managed) or Weaviate (self-hosted) |
-| LLM | Claude claude-sonnet-4-20250514 via Anthropic API |
+| LLM | Claude (model pinned via `ANTHROPIC_MODEL`, defaults to `claude-sonnet-4-6`) via Anthropic API |
 | Email APIs | Gmail API, Microsoft Graph API |
 | Auth | JWT + refresh tokens (existing auth system) |
 | Infrastructure | AWS / GCP — deploy ingestion workers as scheduled Lambda/Cloud Run jobs |
@@ -347,12 +353,15 @@ The search interface should clearly show which account each result came from:
 ### Account Management
 
 ```
-POST   /api/accounts/connect          Initiate OAuth flow for a new account
-GET    /api/accounts                  List all connected accounts for the user
-DELETE /api/accounts/:account_id      Disconnect account + delete vectors
-GET    /api/accounts/:account_id/sync Get sync status for an account
-POST   /api/accounts/:account_id/sync Trigger a manual re-sync
+GET    /api/oauth/google/start         Redirect to Google consent screen (token via ?token= or Authorization header)
+GET    /api/oauth/google/callback      OAuth 2.0 callback, creates the account + queues initial sync
+GET    /api/accounts                   List all connected accounts for the user
+DELETE /api/accounts/:account_id       Disconnect account + delete vectors
+GET    /api/accounts/:account_id/sync  Get sync job history for an account
+POST   /api/accounts/:account_id/sync  Trigger a manual re-sync
 ```
+
+> ⚠️ **Drift note.** The original spec listed `POST /api/accounts/connect` as the entry point; the actual flow is the two `/api/oauth/google/*` routes. A browser redirect is required for the Google consent screen, so a plain POST was never going to work.
 
 ### Search
 
@@ -395,7 +404,18 @@ Body: {
 
 ## 13. Open Questions
 
-- Should attachment content (PDFs, Word docs) be indexed in a future phase?
-- Is there a per-user email volume limit to consider for Pinecone cost management?
-- Should users be able to exclude specific folders/labels (e.g. Spam, Promotions) from indexing?
-- Do we need a hybrid search fallback (keyword + vector) for exact-match queries like message IDs or email addresses?
+- **Attachment content (PDFs, Word docs) indexing** — still open. Text-only today; extraction pipeline not started.
+
+## 14. Decisions Since v1.0
+
+Resolutions of questions originally in §13:
+
+- **Per-user email volume cap** — yes, configured via `EMAIL_LIMIT_PER_USER` in [src/config/constants.ts](../src/config/constants.ts), default 50,000. Enforced in the sync orchestrator before embedding to keep Pinecone + OpenAI costs bounded.
+- **Excluded folders/labels** — yes. `EXCLUDED_LABELS` defaults to `SPAM` / `CATEGORY_PROMOTIONS` / `TRASH`, applied at fetch time in the Gmail adapter. Cleanup has a separate `keep.labels` veto list for user-defined safety rails.
+- **Hybrid search (keyword + vector)** — yes. [src/query/search.ts](../src/query/search.ts) parses explicit sender / date / message-id hints from the natural-language query and applies them as Pinecone metadata filters before the vector search. The LLM still sees ranked vector hits only.
+
+## 15. Observability (added)
+
+- **Structured logs** via `pino`, with per-request child loggers and correlation IDs (`x-request-id` header or auto-generated UUID).
+- **Prometheus counters** exposed at `GET /metrics`: `sync_jobs_started_total`, `sync_jobs_completed_total`, `sync_jobs_failed_total`, `emails_indexed_total`, `search_requests_total`, `oauth_callbacks_total`, `unhandled_errors_total`.
+- **Per-job context**: worker logs carry `jobId` + `accountId`; sync orchestrator logs batch-level progress at `debug`. Redaction rules drop `access_token` / `refresh_token` / `authorization` from any serialized object before it hits a log sink.

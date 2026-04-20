@@ -2,6 +2,10 @@
 
 Self-hosted RAG over your own email. Connect a Gmail account, sync it to a vector database, and ask grounded natural-language questions across your inbox — either through the HTTP API or directly from Claude Code via the bundled MCP server.
 
+![demo](docs/demo/hero.svg)
+
+> The hero above is a static placeholder. Regenerate a real screen recording with the instructions in [docs/demo/](docs/demo/README.md).
+
 Full design rationale lives in [TECH-SPEC.md](./TECH-SPEC.md).
 
 ## Status
@@ -9,13 +13,14 @@ Full design rationale lives in [TECH-SPEC.md](./TECH-SPEC.md).
 | Area | State |
 |---|---|
 | Gmail (OAuth + sync + search) | ✅ Working |
-| Outlook / Microsoft Graph | 🚧 Stub (env wired, routes not implemented) |
+| Outlook / Microsoft Graph | 🚧 Env + adapter sketch; OAuth routes not implemented |
 | Generic IMAP | ❌ Not started |
 | Attachment indexing (PDFs, etc.) | ❌ Not started — text-only today |
 | GDPR erasure endpoint | 🚧 Helper exists, no route |
 | Inbox cleanup (opt-in, off by default) | ✅ Working ([see below](#inbox-cleanup-opt-in)) |
 | MCP server for Claude Code | ✅ Working ([mcp/](./mcp/)) |
-| Test coverage | ⚠️ Pure-logic units only; no integration tests |
+| Observability | ✅ Structured logs (pino) + Prometheus `/metrics` |
+| Test coverage | ✅ Unit + integration tests for sync, OAuth, quota |
 
 If you need anything in the ❌ / 🚧 column, see [CONTRIBUTING.md](./CONTRIBUTING.md) — those are the highest-leverage PRs.
 

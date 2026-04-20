@@ -1,5 +1,9 @@
+import { randomUUID } from "node:crypto";
 import express from "express";
+import pinoHttp from "pino-http";
 import { env } from "./config/env.js";
+import { logger } from "./logger.js";
+import { metrics, renderPrometheus } from "./metrics.js";
 import { accountsRouter } from "./routes/accounts.js";
 import { cleanupRouter } from "./routes/cleanup.js";
 import { oauthRouter } from "./routes/oauth.js";
@@ -8,8 +12,34 @@ import { searchRouter } from "./routes/search.js";
 const app = express();
 app.use(express.json({ limit: "1mb" }));
 
+// Attach a request ID + child logger to every request. Handlers pull it off
+// req.log; errors in the global handler log with the same ID so a user-facing
+// 500 can be correlated to the stack trace in one grep.
+app.use(
+  pinoHttp({
+    logger,
+    genReqId: (req) => (req.headers["x-request-id"] as string | undefined) ?? randomUUID(),
+    customLogLevel: (_req, res, err) => {
+      if (err || res.statusCode >= 500) return "error";
+      if (res.statusCode >= 400) return "warn";
+      return "info";
+    },
+    serializers: {
+      req: (req) => ({ id: req.id, method: req.method, url: req.url }),
+      res: (res) => ({ statusCode: res.statusCode }),
+    },
+  }),
+);
+
 app.get("/health", (_req, res) => {
   res.json({ ok: true });
+});
+
+// Prometheus-style scrape endpoint — counters for sync jobs, search requests,
+// and OAuth callbacks. Kept intentionally tiny (no prom-client dep) because
+// our whole metric surface is a handful of counters.
+app.get("/metrics", (_req, res) => {
+  res.type("text/plain").send(renderPrometheus());
 });
 
 // Landing page after the Google OAuth callback redirects the browser here.
@@ -53,14 +83,19 @@ app.use("/api/accounts", accountsRouter);
 app.use("/api/search", searchRouter);
 if (env.ENABLE_INBOX_CLEANUP) {
   app.use("/api/cleanup", cleanupRouter);
-  console.log("[api] inbox cleanup enabled (/api/cleanup)");
+  logger.info("inbox cleanup enabled (/api/cleanup)");
 }
 
-app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-  console.error(err);
-  res.status(500).json({ error: "internal_error", message: err.message });
+app.use((err: Error, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  const log = (req as express.Request & { log?: typeof logger }).log ?? logger;
+  log.error({ err }, "unhandled route error");
+  metrics.errors.inc();
+  // Never echo the raw error message — it may contain decryption failures,
+  // token fragments, or SQL details. The request ID (in log + response) is
+  // how an operator correlates the user report to the server log.
+  res.status(500).json({ error: "internal_error", requestId: req.id });
 });
 
 app.listen(env.PORT, () => {
-  console.log(`[api] listening on :${env.PORT}`);
+  logger.info({ port: env.PORT }, "api listening");
 });

@@ -26,10 +26,26 @@ Out of scope:
 
 ## What this project handles that you should know about
 
-- **OAuth refresh tokens for Gmail/Outlook** — encrypted at rest with AES-256-GCM using `TOKEN_ENCRYPTION_KEY`. If that key leaks, every stored refresh token is compromised.
-- **Long-lived JWTs** — minted via `pnpm run mint-token` for the MCP integration. Treat them like passwords.
+- **OAuth refresh tokens for Gmail/Outlook** — encrypted at rest with AES-256-GCM using `TOKEN_ENCRYPTION_KEY`. If that key leaks, every stored refresh token is compromised; rotate the env and force every user to reconnect.
+- **Long-lived JWTs** — minted via `pnpm run mint-token` for the MCP integration, 7-day expiry. Treat them like passwords.
 - **Per-user namespace isolation** — enforced server-side from the JWT `sub`, never from request bodies. Any path that lets a user influence the namespace is a high-severity bug.
 - **Raw email text is never persisted** in Postgres — only metadata + the vector in Pinecone. A bug that writes raw bodies to the DB or logs is a bug.
+- **All SQL queries are parameterized** via the `pg` library — the codebase never uses string interpolation to assemble queries.
+- **Structured logs with redaction**: `pino` is configured to drop `access_token`, `refresh_token`, and `authorization` keys before serialization ([src/logger.ts](../src/logger.ts)). Adding a new sensitive field? Add its path to the redact list.
+
+## Assumptions for self-hosted deployments
+
+This server is designed to run **behind a trusted boundary** — your own localhost, a VPN, or a reverse proxy you control. It deliberately does not implement:
+
+- **Rate limiting.** The project assumes a small number of trusted users; if you expose it to the public internet, run it behind a proxy (nginx, Caddy, Cloudflare) with per-IP/per-token rate limits.
+- **Multi-tenant defense in depth.** Namespace isolation is enforced in code, but the server trusts any valid JWT. A leaked JWT = full access to that user's namespace until expiry.
+- **HTTPS termination.** The server speaks plain HTTP on `:3000` by default. OAuth redirect URIs for production must be `https://` — terminate TLS at your proxy.
+
+Input size limits that **are** enforced:
+
+- `express.json({ limit: "1mb" })` on all JSON bodies.
+- Search query ≤ 500 chars, `top_k` ≤ 50, `account_ids` ≤ 20 ([src/routes/search.ts](../src/routes/search.ts)).
+- Cleanup rule arrays capped (senders ≤ 100, labels ≤ 50, subjectMatches ≤ 50), `maxMessages` ≤ 5000 ([src/cleanup/rules.ts](../src/cleanup/rules.ts)).
 
 ## What we do not promise
 

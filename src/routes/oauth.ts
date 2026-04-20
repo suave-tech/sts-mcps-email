@@ -1,9 +1,10 @@
 import { type NextFunction, type Request, type Response, Router } from "express";
 import jwt from "jsonwebtoken";
 import { encrypt } from "../auth/crypto.js";
-import { type AuthedRequest, requireAuth } from "../auth/jwt.js";
+import { getUserId, requireAuth } from "../auth/jwt.js";
 import { env } from "../config/env.js";
 import { query } from "../db/client.js";
+import { metrics } from "../metrics.js";
 import { oauthClient } from "../providers/gmail.js";
 import { syncQueue } from "../queue/queue.js";
 
@@ -34,7 +35,7 @@ function authFromHeaderOrQuery(req: Request, res: Response, next: NextFunction):
   }
   try {
     const decoded = jwt.verify(token, env.JWT_SECRET) as { sub: string };
-    (req as AuthedRequest).userId = decoded.sub;
+    req.userId = decoded.sub;
     next();
   } catch {
     res.status(401).json({ error: "invalid_token" });
@@ -46,7 +47,7 @@ oauthRouter.get("/google/start", authFromHeaderOrQuery, (req, res) => {
   const scopes = gmailScopes(cleanup);
   // Pipe-encode the cleanup intent through `state` so the callback knows which
   // scope set was granted without a separate session store.
-  const state = JSON.stringify({ u: (req as AuthedRequest).userId, c: cleanup });
+  const state = JSON.stringify({ u: getUserId(req), c: cleanup });
   const url = oauthClient().generateAuthUrl({
     access_type: "offline",
     prompt: "consent",
@@ -110,6 +111,7 @@ oauthRouter.get("/google/callback", async (req, res) => {
   );
 
   await syncQueue.add("initial", { accountId: acct!.id, kind: "initial" });
+  metrics.oauthCallbacks.inc();
   res.redirect(`${new URL(env.GOOGLE_REDIRECT_URI).origin}/accounts?connected=${acct!.id}`);
 });
 

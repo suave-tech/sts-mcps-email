@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
+import type { Logger } from "pino";
 import { ensureFreshToken } from "../auth/token.js";
 import { INITIAL_SYNC_BATCH } from "../config/constants.js";
 import { query } from "../db/client.js";
+import { logger as defaultLogger } from "../logger.js";
 import { providerFor } from "../providers/index.js";
 import type { NormalizedEmail } from "../providers/types.js";
 import { upsertEmailVectors } from "../vector/pinecone.js";
@@ -22,7 +24,10 @@ interface AccountRow {
   initial_sync_complete: boolean;
 }
 
-export async function syncAccount(accountId: string): Promise<{ synced: number }> {
+export async function syncAccount(
+  accountId: string,
+  log: Logger = defaultLogger,
+): Promise<{ synced: number }> {
   const [acct] = await query<AccountRow>("SELECT * FROM accounts WHERE id = $1 AND is_active = true", [
     accountId,
   ]);
@@ -34,20 +39,26 @@ export async function syncAccount(accountId: string): Promise<{ synced: number }
   const since = acct.last_synced ? new Date(acct.last_synced) : undefined;
   let pageToken: string | undefined;
   let totalSynced = 0;
+  let page = 0;
 
   do {
     const quotaLeft = await remainingQuota(acct.user_id);
-    if (quotaLeft <= 0) break;
+    if (quotaLeft <= 0) {
+      log.warn({ accountId }, "quota exhausted — stopping sync");
+      break;
+    }
 
-    const page = await provider.fetchPage(accessToken, {
+    const result = await provider.fetchPage(accessToken, {
       since,
       limit: Math.min(INITIAL_SYNC_BATCH, quotaLeft),
       pageToken,
     });
 
-    const processed = await processBatch(acct, page.emails.slice(0, quotaLeft));
+    const processed = await processBatch(acct, result.emails.slice(0, quotaLeft), log);
     totalSynced += processed;
-    pageToken = page.nextPageToken;
+    pageToken = result.nextPageToken;
+    page++;
+    log.debug({ page, processed, totalSynced, hasMore: !!pageToken }, "batch processed");
   } while (pageToken);
 
   await query("UPDATE accounts SET last_synced = now(), initial_sync_complete = true WHERE id = $1", [
@@ -57,7 +68,7 @@ export async function syncAccount(accountId: string): Promise<{ synced: number }
   return { synced: totalSynced };
 }
 
-async function processBatch(acct: AccountRow, emails: NormalizedEmail[]): Promise<number> {
+async function processBatch(acct: AccountRow, emails: NormalizedEmail[], log: Logger): Promise<number> {
   if (emails.length === 0) return 0;
 
   const existing = await getExistingLog(
@@ -111,5 +122,9 @@ async function processBatch(acct: AccountRow, emails: NormalizedEmail[]): Promis
 
   const newlyAdded = toEmbed.filter((t) => t.isNew).length;
   await incrementIndexedCount(acct.user_id, newlyAdded);
+  log.debug(
+    { embedded: toEmbed.length, newlyAdded, skipped: emails.length - toEmbed.length },
+    "batch embedded",
+  );
   return toEmbed.length;
 }

@@ -2,15 +2,17 @@ import { z } from "zod";
 
 // User-facing cleanup rules. Kept intentionally small — Gmail's search DSL
 // already expresses most of what people want to delete, so we lean on it.
+// Array caps here prevent a runaway rule from ballooning the Gmail query
+// string or the result set; tune the 100 if you need bigger allowlists.
 export const CleanupRules = z.object({
   // Match senders by full address ("promos@brand.com") or by domain ("@brand.com").
-  senders: z.array(z.string().min(1)).default([]),
+  senders: z.array(z.string().min(1).max(200)).max(100).default([]),
 
   // Gmail system/category labels, e.g. "CATEGORY_PROMOTIONS", "CATEGORY_SOCIAL".
-  labels: z.array(z.string().min(1)).default([]),
+  labels: z.array(z.string().min(1).max(100)).max(50).default([]),
 
   // Subject substrings (case-insensitive, whole-phrase match via Gmail quoting).
-  subjectMatches: z.array(z.string().min(1)).default([]),
+  subjectMatches: z.array(z.string().min(1).max(200)).max(50).default([]),
 
   // Gmail's `has:list` matches messages with List-Unsubscribe headers —
   // a strong signal for newsletters / fashion drops / transactional marketing.
@@ -22,9 +24,9 @@ export const CleanupRules = z.object({
   // it would otherwise be caught by the filters above.
   keep: z
     .object({
-      senders: z.array(z.string().min(1)).default([]),
-      labels: z.array(z.string().min(1)).default([]),
-      subjectMatches: z.array(z.string().min(1)).default([]),
+      senders: z.array(z.string().min(1).max(200)).max(100).default([]),
+      labels: z.array(z.string().min(1).max(100)).max(50).default([]),
+      subjectMatches: z.array(z.string().min(1).max(200)).max(50).default([]),
     })
     .default({ senders: [], labels: [], subjectMatches: [] }),
 

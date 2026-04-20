@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { type AuthedRequest, requireAuth } from "../auth/jwt.js";
+import { getUserId, requireAuth } from "../auth/jwt.js";
 import { CleanupRules } from "../cleanup/rules.js";
 import { CleanupError, previewCleanup, runCleanup } from "../cleanup/runner.js";
 
@@ -9,7 +9,7 @@ cleanupRouter.use(requireAuth);
 cleanupRouter.post("/preview", async (req, res) => {
   try {
     const { accountId, rules } = parseBody(req.body);
-    const result = await previewCleanup((req as AuthedRequest).userId, accountId, rules);
+    const result = await previewCleanup(getUserId(req), accountId, rules);
     res.json(result);
   } catch (err) {
     handleError(err, res);
@@ -23,7 +23,7 @@ cleanupRouter.post("/run", async (req, res) => {
       return;
     }
     const { accountId, rules } = parseBody(req.body);
-    const result = await runCleanup((req as AuthedRequest).userId, accountId, rules);
+    const result = await runCleanup(getUserId(req), accountId, rules);
     res.json(result);
   } catch (err) {
     handleError(err, res);
