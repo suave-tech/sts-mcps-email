@@ -4,8 +4,9 @@ import { EXCLUDED_LABELS } from "../config/constants.js";
 import { env } from "../config/env.js";
 import type { EmailProvider, FetchPage, NormalizedEmail } from "./types.js";
 
-export const oauthClient = () =>
-  new google.auth.OAuth2(env.GOOGLE_CLIENT_ID, env.GOOGLE_CLIENT_SECRET, env.GOOGLE_REDIRECT_URI);
+export function oauthClient(): InstanceType<typeof google.auth.OAuth2> {
+  return new google.auth.OAuth2(env.GOOGLE_CLIENT_ID, env.GOOGLE_CLIENT_SECRET, env.GOOGLE_REDIRECT_URI);
+}
 
 export interface CleanupCandidate {
   id: string;

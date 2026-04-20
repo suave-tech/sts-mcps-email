@@ -28,7 +28,7 @@ export async function answer(question: string, hits: SearchHit[]): Promise<strin
   const message = await client.messages.create({
     model: env.ANTHROPIC_MODEL,
     max_tokens: 1024,
-    system: [{ type: "text", text: SYSTEM, cache_control: { type: "ephemeral" } }],
+    system: SYSTEM,
     messages: [
       {
         role: "user",

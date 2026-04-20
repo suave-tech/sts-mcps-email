@@ -1,5 +1,10 @@
 import { Router } from "express";
 import { type AuthedRequest, requireAuth } from "../auth/jwt.js";
+
+// NOTE: routes that use `req.params` narrow Express's Request generic, which
+// makes a direct `req as AuthedRequest` cast fail the "sufficient overlap"
+// check. We double-cast through `unknown` — requireAuth middleware guarantees
+// userId is set by the time these handlers run.
 import { query } from "../db/client.js";
 import { syncQueue } from "../queue/queue.js";
 import { deleteByAccount } from "../vector/pinecone.js";
@@ -9,7 +14,7 @@ export const accountsRouter: Router = Router();
 accountsRouter.use(requireAuth);
 
 accountsRouter.get("/", async (req, res) => {
-  const userId = (req as AuthedRequest).userId;
+  const userId = (req as unknown as AuthedRequest).userId;
   const rows = await query(
     `SELECT id, provider, email_address, last_synced, initial_sync_complete, is_active, needs_reauth
      FROM accounts WHERE user_id = $1 ORDER BY created_at ASC`,
@@ -19,7 +24,7 @@ accountsRouter.get("/", async (req, res) => {
 });
 
 accountsRouter.delete("/:accountId", async (req, res) => {
-  const userId = (req as AuthedRequest).userId;
+  const userId = (req as unknown as AuthedRequest).userId;
   const { accountId } = req.params;
   const rows = await query<{ id: string }>("SELECT id FROM accounts WHERE id = $1 AND user_id = $2", [
     accountId,
@@ -35,7 +40,7 @@ accountsRouter.delete("/:accountId", async (req, res) => {
 });
 
 accountsRouter.get("/:accountId/sync", async (req, res) => {
-  const userId = (req as AuthedRequest).userId;
+  const userId = (req as unknown as AuthedRequest).userId;
   const rows = await query(
     `SELECT id, status, emails_synced, started_at, completed_at, error
      FROM sync_jobs WHERE account_id IN
@@ -47,7 +52,7 @@ accountsRouter.get("/:accountId/sync", async (req, res) => {
 });
 
 accountsRouter.post("/:accountId/sync", async (req, res) => {
-  const userId = (req as AuthedRequest).userId;
+  const userId = (req as unknown as AuthedRequest).userId;
   const rows = await query<{ id: string }>("SELECT id FROM accounts WHERE id = $1 AND user_id = $2", [
     req.params.accountId,
     userId,
